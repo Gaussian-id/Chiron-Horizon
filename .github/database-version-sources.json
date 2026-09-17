@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "targets": [
+    {
+      "id": "postgresql",
+      "kind": "docker-hub-image",
+      "currentVersion": "17.4",
+      "versionPrefix": "17.",
+      "source": { "repository": "library/postgres" },
+      "image": "postgres",
+      "template": "deploy/database/postgresql/17.4",
+      "portRange": [10300, 10399],
+      "testSuite": "postgresql"
+    },
+    {
+      "id": "mysql",
+      "kind": "docker-hub-image",
+      "currentVersion": "8.4.6",
+      "versionPrefix": "8.4.",
+      "source": { "repository": "library/mysql" },
+      "image": "mysql",
+      "template": "deploy/database/mysql/8.4",
+      "portRange": [10100, 10199],
+      "testSuite": "mysql"
+    },
+    {
+      "id": "duckdb",
+      "kind": "crates-io-package",
+      "currentVersion": "1.3.2",
+      "versionPrefix": "1.3.",
+      "source": { "crate": "duckdb" },
+      "manifest": "agents/drivers/duckdb/Cargo.toml",
+      "lockfile": "agents/drivers/duckdb/Cargo.lock",
+      "testSuite": "duckdb"
+    }
+  ]
+}

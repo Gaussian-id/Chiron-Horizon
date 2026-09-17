@@ -1,0 +1,102 @@
+name: Database Version Monitor
+
+on:
+  schedule:
+    # Monday 02:00 Asia/Jakarta (UTC+7).
+    - cron: '0 19 * * 0'
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Configured target to check
+        required: true
+        default: postgresql
+        type: choice
+        options: [postgresql, mysql, duckdb]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  propose-update:
+    runs-on: [self-hosted, Linux, X64]
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [postgresql, mysql, duckdb]
+    concurrency:
+      group: database-version-monitor-${{ matrix.target }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v5
+        if: github.event_name == 'schedule' || matrix.target == inputs.target
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v6
+        if: github.event_name == 'schedule' || matrix.target == inputs.target
+        with:
+          node-version: 22.13.0
+
+      - name: Check configured sources
+        if: github.event_name == 'schedule' || matrix.target == inputs.target
+        id: check
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          node scripts/database-version-monitor.mjs --mode check --target "$TARGET" --output proposal.json
+          COUNT=$(node -p "JSON.parse(require('node:fs').readFileSync('proposal.json')).proposals.length")
+          echo "count=$COUNT" >> "$GITHUB_OUTPUT"
+
+      - name: Create or refresh one proposal branch
+        if: (github.event_name == 'schedule' || matrix.target == inputs.target) && steps.check.outputs.count == '1'
+        id: proposal
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TARGET=$(node -p "JSON.parse(require('node:fs').readFileSync('proposal.json')).proposals[0].id")
+          VERSION=$(node -p "JSON.parse(require('node:fs').readFileSync('proposal.json')).proposals[0].latestVersion")
+          BRANCH="bot/database-version/${TARGET}-${VERSION}"
+          {
+            echo "target=$TARGET"
+            echo "version=$VERSION"
+            echo "branch=$BRANCH"
+          } >> "$GITHUB_OUTPUT"
+
+          if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
+            git fetch origin "$BRANCH"
+            git switch --force-create "$BRANCH" "origin/$BRANCH"
+          else
+            git switch --create "$BRANCH"
+            node scripts/database-version-monitor.mjs --mode propose --target "$TARGET"
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add .github/database-version-sources.json deploy/database agents/drivers/duckdb
+            git commit -m "chore(${TARGET}): propose ${VERSION} compatibility update"
+            git push --set-upstream origin "$BRANCH"
+          fi
+
+      - name: Open proposal pull request
+        if: (github.event_name == 'schedule' || matrix.target == inputs.target) && steps.check.outputs.count == '1'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET: ${{ steps.proposal.outputs.target }}
+          VERSION: ${{ steps.proposal.outputs.version }}
+          BRANCH: ${{ steps.proposal.outputs.branch }}
+        run: |
+          SOURCE=$(node -p "const c=require('./.github/database-version-sources.json'); const t=c.targets.find(x=>x.id===process.env.TARGET); t.kind === 'docker-hub-image' ? 'https://hub.docker.com/r/' + t.source.repository : 'https://crates.io/crates/' + t.source.crate")
+          BODY=$(cat <<EOF
+          ## Database version proposal
+
+          - Target: \`$TARGET\`
+          - Proposed version: \`$VERSION\`
+          - Source: $SOURCE
+
+          This PR was created by \`github-actions[bot]\`. Approve its workflow run, review the compatibility logs, then merge manually. The bot cannot merge or approve this PR.
+          EOF
+          )
+          if gh pr view "$BRANCH" --json number >/dev/null 2>&1; then
+            gh pr edit "$BRANCH" --title "chore($TARGET): test $VERSION compatibility" --body "$BODY"
+          else
+            gh pr create --base main --head "$BRANCH" --title "chore($TARGET): test $VERSION compatibility" --body "$BODY"
+          fi

@@ -71,3 +71,44 @@ jobs:
           name: Chiron Horizon-0.1.0-${{ matrix.target }}
           path: target/${{ matrix.target }}/release/bundle/
           if-no-files-found: error
+
+  database-compatibility:
+    name: database-compatibility
+    # This job intentionally uses the repository's Docker-capable runner.
+    # It is also the branch-protection status for version-monitor proposals.
+    runs-on: [self-hosted, Linux, X64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.27.0
+      - uses: dtolnay/rust-toolchain@1.94.1
+      - run: pnpm install --frozen-lockfile
+      - name: Read the pinned recipe versions
+        id: versions
+        run: |
+          # shellcheck disable=SC2016 # Node receives these single-quoted programs verbatim.
+          node -e 'const r=require("./.github/database-version-sources.json"); console.log(`postgresql=${r.targets.find(t => t.id === "postgresql").currentVersion}`)' >> "$GITHUB_OUTPUT"
+          # shellcheck disable=SC2016 # Node receives these single-quoted programs verbatim.
+          node -e 'const r=require("./.github/database-version-sources.json"); console.log(`mysql=${r.targets.find(t => t.id === "mysql").currentVersion}`)' >> "$GITHUB_OUTPUT"
+      - name: Verify PostgreSQL compatibility
+        env:
+          VERSION: ${{ steps.versions.outputs.postgresql }}
+        run: |
+          trap 'pnpm db:env -- down postgresql "$VERSION"' EXIT
+          pnpm db:env -- verify postgresql "$VERSION"
+          PORT=$(node --input-type=module -e "import { discoverRecipes, resolveRecipe } from './scripts/database-env.mjs'; console.log(resolveRecipe(discoverRecipes(), 'postgresql', process.env.VERSION).connection.port)")
+          CHIRON_HORIZON_COMPAT_POSTGRES_URL="postgres://postgres:123456@127.0.0.1:$PORT/chiron-horizon" cargo test -p chiron-horizon-core --test database_version_compatibility postgresql_version_monitor_crud -- --ignored
+      - name: Verify MySQL compatibility
+        env:
+          VERSION: ${{ steps.versions.outputs.mysql }}
+        run: |
+          trap 'pnpm db:env -- down mysql "$VERSION"' EXIT
+          pnpm db:env -- verify mysql "$VERSION"
+          PORT=$(node --input-type=module -e "import { discoverRecipes, resolveRecipe } from './scripts/database-env.mjs'; console.log(resolveRecipe(discoverRecipes(), 'mysql', process.env.VERSION).connection.port)")
+          CHIRON_HORIZON_COMPAT_MYSQL_URL="mysql://root:123456@127.0.0.1:$PORT/chiron-horizon" cargo test -p chiron-horizon-core --test database_version_compatibility mysql_version_monitor_crud -- --ignored
+      - name: Verify DuckDB driver
+        run: cargo test --manifest-path agents/drivers/duckdb/Cargo.toml --locked
