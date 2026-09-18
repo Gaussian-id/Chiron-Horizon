@@ -56,7 +56,7 @@ if (config.productName !== "Chiron Horizon" || config.version !== "0.1.0" || con
 if (config.plugins.updater || config.bundle.createUpdaterArtifacts) failures.push("Updater configuration must be absent/disabled");
 
 const workflows = readdirSync(".github/workflows").sort();
-const expectedWorkflows = new Set(["verify.yml", "release.yml"]);
+const expectedWorkflows = new Set(["verify.yml", "release.yml", "database-version-monitor.yml"]);
 for (const file of workflows) if (!expectedWorkflows.has(file)) failures.push(`Unreviewed active workflow: ${file}`);
 for (const file of expectedWorkflows) if (!workflows.includes(file)) failures.push(`Required workflow missing: ${file}`);
 
@@ -77,6 +77,16 @@ if (workflows.includes("release.yml")) {
   if (!/gh\s+release\s+create/.test(release)) failures.push("Release workflow must create the GitHub Release after validation");
   if (/\b(?:pnpm|npm)\s+publish\b|\bdocker\s+(?:push|login|buildx)\b|\bgit\s+push\b|\bgh\s+api\b|latest\.json|createUpdaterArtifacts\s*:\s*true|cloudflare|r2|cnb|mirror/i.test(release)) {
     failures.push("Release workflow enables a forbidden distribution, mirror, updater, or repository mutation");
+  }
+}
+
+if (workflows.includes("database-version-monitor.yml")) {
+  const monitor = readFileSync(".github/workflows/database-version-monitor.yml", "utf8");
+  if (!/contents:\s*write/.test(monitor) || !/pull-requests:\s*write/.test(monitor)) {
+    failures.push("Database monitor needs contents and pull-request write permissions to create proposals");
+  }
+  if (!/schedule:/.test(monitor) || !/workflow_dispatch:/.test(monitor)) {
+    failures.push("Database monitor must support scheduled and manual runs");
   }
 }
 

@@ -62,6 +62,7 @@ Thumbs.db
 !.github/workflows/
 !.github/scripts/
 !.github/ISSUE_TEMPLATE/
+!.github/database-version-sources.json
 
 # Env
 .env
